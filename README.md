@@ -17,3 +17,5 @@ $> go run cmd/main.go
 
 - routing
 - zap logging
+- jaeger tracing
+- open telemetry
