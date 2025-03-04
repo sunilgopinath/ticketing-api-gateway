@@ -2,7 +2,8 @@ package tracing
 
 import (
 	"context"
-	"log"
+	"os"   // Add for env vars
+	"time" // Add for batching
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -11,31 +12,34 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 )
 
-// InitTracer initializes OpenTelemetry tracing and returns a shutdown function
-func InitTracer() func(context.Context) error {
+func InitTracer() (func(context.Context) error, error) {
 	ctx := context.Background()
 
-	// Create OTLP gRPC exporter to send traces directly to Jaeger
-	exporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithEndpoint("localhost:4317"), otlptracegrpc.WithInsecure())
-	if err != nil {
-		log.Fatalf("Failed to create OTLP gRPC exporter: %v", err)
+	// Use env var with fallback
+	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "localhost:4317" // Jaeger OTLP gRPC
 	}
 
-	// Create a new trace provider
+	exporter, err := otlptracegrpc.New(ctx,
+		otlptracegrpc.WithEndpoint(endpoint),
+		otlptracegrpc.WithInsecure(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	tp := trace.NewTracerProvider(
-		trace.WithBatcher(exporter),
+		trace.WithBatcher(exporter,
+			trace.WithBatchTimeout(5*time.Second),
+			trace.WithMaxExportBatchSize(512),
+		),
 		trace.WithResource(resource.NewWithAttributes(
 			semconv.SchemaURL,
 			semconv.ServiceNameKey.String("ticketing-api-gateway"),
 		)),
 	)
 
-	// Set the global tracer provider
 	otel.SetTracerProvider(tp)
-
-	// Return a proper shutdown function
-	return func(ctx context.Context) error {
-		log.Println("Shutting down OpenTelemetry Tracer...")
-		return tp.Shutdown(ctx)
-	}
+	return tp.Shutdown, nil
 }
