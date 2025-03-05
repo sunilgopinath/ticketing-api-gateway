@@ -17,21 +17,16 @@ type Response struct {
 	Message string `json:"message"`
 }
 
-func BrowseEventsHandler(w http.ResponseWriter, r *http.Request) {
+func BrowseEventsHandler(w http.ResponseWriter, r *http.Request, instance string) {
 	ctx := r.Context()
-	tracer := otel.Tracer("ticketing-api-gateway") // Get OpenTelemetry tracer
-
-	// Start a span for tracing
+	tracer := otel.Tracer("ticketing-api-gateway")
 	ctx, span := tracer.Start(ctx, "BrowseEventsHandler")
 	defer span.End()
 
-	// Get real trace ID
 	traceID := span.SpanContext().TraceID().String()
+	cacheKey := generateCacheKey(r, "browse_events_")
 
-	cacheKey := generateCacheKey(r, "view_events_") // Reuse with unique prefix
-
-	// Try retrieving from cache
-	cached, err := cache.GetCache(ctx, cacheKey)
+	cached, err := cache.GetCache(ctx, cacheKey, "/events", instance)
 	if err == nil && cached != "" {
 		logger.Log.Info("Cache hit for /events",
 			zap.String("trace_id", traceID),
@@ -45,7 +40,6 @@ func BrowseEventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cache miss - log and process request
 	logger.Log.Info("Cache miss for /events, processing request",
 		zap.String("trace_id", traceID),
 		zap.String("method", r.Method),
@@ -54,7 +48,6 @@ func BrowseEventsHandler(w http.ResponseWriter, r *http.Request) {
 		zap.String("cache_key", cacheKey),
 	)
 
-	// Validate request method
 	if r.Method != http.MethodGet {
 		err := errors.New("invalid request method")
 		logger.Log.Error("Invalid method for /events",
@@ -68,7 +61,6 @@ func BrowseEventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate response
 	response := Response{Message: fmt.Sprintf("List of events for query: %s", r.URL.RawQuery)}
 	respBytes, err := json.Marshal(response)
 	if err != nil {
@@ -80,8 +72,7 @@ func BrowseEventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store response in cache for 30 seconds
-	if cacheErr := cache.SetCache(ctx, cacheKey, string(respBytes), 30*time.Second); cacheErr != nil {
+	if cacheErr := cache.SetCache(ctx, cacheKey, string(respBytes), 30*time.Second, "/events", instance); cacheErr != nil {
 		logger.Log.Warn("Failed to store response in cache",
 			zap.String("trace_id", traceID),
 			zap.String("cache_key", cacheKey),
@@ -89,7 +80,6 @@ func BrowseEventsHandler(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	// Send response
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(respBytes)
 }
