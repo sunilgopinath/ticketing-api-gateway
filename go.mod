@@ -5,6 +5,7 @@ go 1.22.0
 toolchain go1.23.6
 
 require (
+	github.com/go-redis/redis_rate/v10 v10.0.1
 	github.com/prometheus/client_golang v1.21.1
 	github.com/redis/go-redis/v9 v9.7.1
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.59.0
