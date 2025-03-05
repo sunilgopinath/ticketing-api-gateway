@@ -1,6 +1,8 @@
 package router
 
 import (
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"time"
@@ -9,9 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sunilgopinath/ticketingapigateway/internal/cache"
 	"github.com/sunilgopinath/ticketingapigateway/internal/handlers"
-	"github.com/sunilgopinath/ticketingapigateway/internal/logger"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.uber.org/zap"
 )
 
 var limiter *redis_rate.Limiter
@@ -20,21 +20,22 @@ func rateLimit(next http.Handler, instance string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
-			logger.Log.Error("Failed to parse client IP", zap.Error(err))
-			clientIP = r.RemoteAddr // Fallback, though unlikely needed
+			log.Printf("Failed to parse client IP: %v", err)
+			clientIP = r.RemoteAddr
 		}
 		key := "ratelimit:" + clientIP + ":" + instance
 		limit := redis_rate.Limit{
-			Rate:   10,          // 10 requests
-			Burst:  10,          // Allow burst up to 10
-			Period: time.Minute, // Per minute
+			Rate:   10,
+			Burst:  10,
+			Period: time.Minute,
 		}
 		res, err := limiter.Allow(r.Context(), key, limit)
 		if err != nil {
-			logger.Log.Error("Failed to check rate limit", zap.Error(err))
+			log.Printf("Rate limit error: %v", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
+		log.Printf("Rate limit check: key=%s, Allowed=%d, Remaining=%d", key, res.Allowed, res.Remaining)
 		if res.Allowed == 0 {
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			return
@@ -49,15 +50,34 @@ func SetupRoutes(instance string) *http.ServeMux {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/events", rateLimit(otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handlers.BrowseEventsHandler(w, r, instance)
-	}), "BrowseEvents"), instance))
+	mux.Handle("/events", rateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxy(w, r, "http://localhost:8081/events")
+	}), instance))
+	mux.Handle("/bookings", rateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxy(w, r, "http://localhost:8082/bookings")
+	}), instance))
 	mux.Handle("/purchase", rateLimit(otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handlers.PurchaseTicketHandler(w, r, instance)
 	}), "PurchaseTicket"), instance))
-	mux.Handle("/bookings", rateLimit(otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handlers.ViewBookingsHandler(w, r, instance)
-	}), "ViewBookings"), instance))
 	mux.Handle("/metrics", promhttp.Handler())
 	return mux
+}
+
+func proxy(w http.ResponseWriter, r *http.Request, url string) {
+	req, err := http.NewRequest(r.Method, url, r.Body)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close()
+	for k, v := range resp.Header {
+		w.Header()[k] = v
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
