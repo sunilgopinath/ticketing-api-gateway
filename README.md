@@ -108,6 +108,57 @@ Save if needed.
 
 For true HA, use thanos querier to collect metrics from all prometheus instances, point grafana to thanos endpoint
 
+### Rate limiting
+
+We are using [redis_rate](https://github.com/go-redis/redis_rate) to do per endpoint rate limiting. We can limit at the nginx level as well
+
+To test rate limiting
+
+```bash
+$> go run cmd/main.go -port=8080 -instance=gateway-1
+```
+
+and in another terminal
+
+```bash
+$> bash -c 'for i in {1..15}; do curl -s -o /dev/null -w "%{http_code}\n" "http://localhost:8080/bookings?user_id=123"; done'
+200
+200
+200
+200
+200
+200
+200
+200
+200
+200
+429
+429
+429
+429
+429
+```
+
+### Split into services (monorepo)
+
+#### Events
+
+```bash
+$> go run cmd/events/main.go -port=8081 -instance=events-1
+```
+
+#### Bookings
+
+```bash
+$> go run cmd/bookings/main.go -port=8082 -instance=bookings-1
+```
+
+#### API Gateway (and Payments)
+
+```bash
+$> go run cmd/gateway/main.go -port=8080 -instance=gateway-1
+```
+
 ## Features
 
 - routing
@@ -117,3 +168,5 @@ For true HA, use thanos querier to collect metrics from all prometheus instances
 - redis API caching
 - prometheus (metrics)
 - grafana dashboards
+- rate limiting (redis_rate)
+- split into microservices
