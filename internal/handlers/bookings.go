@@ -17,17 +17,18 @@ import (
 	"go.uber.org/zap"
 )
 
-func ViewBookingsHandler(w http.ResponseWriter, r *http.Request) {
+func ViewBookingsHandler(w http.ResponseWriter, r *http.Request, instance string) {
+
 	ctx := r.Context()
 	tracer := otel.Tracer("ticketing-api-gateway")
 	ctx, span := tracer.Start(ctx, "ViewBookingsHandler")
 	defer span.End()
 
 	traceID := span.SpanContext().TraceID().String()
-	cacheKey := generateCacheKey(r, "view_bookings_") // Reuse with unique prefix
+	cacheKey := generateCacheKey(r, "view_bookings_")
 
-	// Try retrieving from cache
-	cached, err := cache.GetCache(ctx, cacheKey)
+	// Pass endpoint to cache functions
+	cached, err := cache.GetCache(ctx, cacheKey, "/bookings", instance)
 	if err == nil && cached != "" {
 		logger.Log.Info("Cache hit for /bookings",
 			zap.String("trace_id", traceID),
@@ -41,7 +42,6 @@ func ViewBookingsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cache miss
 	logger.Log.Info("Cache miss for /bookings, processing request",
 		zap.String("trace_id", traceID),
 		zap.String("method", r.Method),
@@ -74,7 +74,7 @@ func ViewBookingsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if cacheErr := cache.SetCache(ctx, cacheKey, string(respBytes), 30*time.Second); cacheErr != nil {
+	if cacheErr := cache.SetCache(ctx, cacheKey, string(respBytes), 30*time.Second, "/bookings", instance); cacheErr != nil {
 		logger.Log.Warn("Failed to store response in cache",
 			zap.String("trace_id", traceID),
 			zap.String("cache_key", cacheKey),

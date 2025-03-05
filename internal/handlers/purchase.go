@@ -15,15 +15,13 @@ import (
 	"go.uber.org/zap"
 )
 
-func PurchaseTicketHandler(w http.ResponseWriter, r *http.Request) {
+func PurchaseTicketHandler(w http.ResponseWriter, r *http.Request, instance string) {
 	ctx := r.Context()
 	tracer := otel.Tracer("ticketing-api-gateway")
 	ctx, span := tracer.Start(ctx, "PurchaseTicketHandler")
 	defer span.End()
 
 	traceID := span.SpanContext().TraceID().String()
-
-	// Generate cache key from request body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		logger.Log.Error("Failed to read request body",
@@ -36,8 +34,7 @@ func PurchaseTicketHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	cacheKey := generateCacheKeyFromBody(body, "purchase_")
 
-	// Optional: Check cache (only if purchase is idempotent)
-	cached, err := cache.GetCache(ctx, cacheKey)
+	cached, err := cache.GetCache(ctx, cacheKey, "/purchase", instance)
 	if err == nil && cached != "" {
 		logger.Log.Info("Cache hit for /purchase",
 			zap.String("trace_id", traceID),
@@ -72,7 +69,6 @@ func PurchaseTicketHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stub response (replace with real purchase logic later)
 	response := Response{Message: "Ticket purchase successful (stub)"}
 	respBytes, err := json.Marshal(response)
 	if err != nil {
@@ -84,8 +80,7 @@ func PurchaseTicketHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional: Cache response (if idempotent)
-	if cacheErr := cache.SetCache(ctx, cacheKey, string(respBytes), 30*time.Second); cacheErr != nil {
+	if cacheErr := cache.SetCache(ctx, cacheKey, string(respBytes), 30*time.Second, "/purchase", instance); cacheErr != nil {
 		logger.Log.Warn("Failed to store response in cache",
 			zap.String("trace_id", traceID),
 			zap.String("cache_key", cacheKey),
@@ -97,7 +92,6 @@ func PurchaseTicketHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(respBytes)
 }
 
-// generateCacheKeyFromBody creates a cache key from POST body
 func generateCacheKeyFromBody(body []byte, prefix string) string {
 	hash := sha256.Sum256(body)
 	return prefix + hex.EncodeToString(hash[:8])
