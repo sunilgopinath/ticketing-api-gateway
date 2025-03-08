@@ -1,4 +1,4 @@
-# ticketmaster
+# ticketing-api-gateway
 
 I'm going to use hello interview as a basis and implement all the things they talked about 
 
